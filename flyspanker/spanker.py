@@ -162,7 +162,12 @@ class Spanker:
         plt.tight_layout()
 
     def _build_widgets(self) -> None:
-        """Create ipywidgets controls and display them below the figure."""
+        """Create ipywidgets controls and display them to the right of the figure.
+
+        When the ipympl backend is active the figure canvas is itself a widget,
+        so we embed it together with the controls in an HBox.  In other backends
+        (e.g. Agg during testing) the controls are displayed on their own.
+        """
         ny, nx = self.data.shape
         max_radius = min(nx, ny) // 4
 
@@ -171,16 +176,27 @@ class Spanker:
             min=1.0,
             max=float(max_radius),
             step=0.5,
-            description="Aperture radius (px):",
+            description="Radius (px):",
             style={"description_width": "initial"},
-            layout=widgets.Layout(width="420px"),
+            layout=widgets.Layout(height="200px"),
+            orientation="vertical",
         )
         self._radius_slider.observe(self._on_radius_change, names="value")
 
         self._output_box = widgets.Output()
 
-        panel = widgets.VBox([self._radius_slider, self._output_box])
-        ipython_display(panel)
+        controls = widgets.VBox(
+            [self._radius_slider, self._output_box],
+            layout=widgets.Layout(padding="10px", align_items="center"),
+        )
+
+        # With the ipympl backend the canvas is a widget; place the figure
+        # and controls side-by-side in an HBox.  In other backends fall back
+        # to displaying only the controls panel (the figure is shown normally).
+        if isinstance(self.fig.canvas, widgets.Widget):
+            ipython_display(widgets.HBox([self.fig.canvas, controls]))
+        else:
+            ipython_display(controls)
 
     # ------------------------------------------------------------------
     # Event handlers
