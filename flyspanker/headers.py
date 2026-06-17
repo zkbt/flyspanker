@@ -2,6 +2,7 @@
 Tools for summarizing FITS header metadata.
 """
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -74,14 +75,12 @@ def summarize_fits_headers(directory, pattern="*.fit*", hdu=0):
             headers.append(hdr_dict)
             filenames.append(path.name)
         except Exception as exc:
-            # Skip unreadable files but warn the user
-            import warnings
             warnings.warn(f"Could not read {path.name}: {exc}", stacklevel=2)
 
     if not headers:
         raise ValueError("No FITS files could be read successfully.")
 
-    # --- second pass: build unified column list (preserving encounter order) -
+    # --- second pass: build unified column list (preserving encounter order) ---
     seen_keys = {}
     for hdr_dict in headers:
         for key in hdr_dict:
