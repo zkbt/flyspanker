@@ -203,7 +203,17 @@ class Spanker:
     # ------------------------------------------------------------------
 
     def _on_click(self, event) -> None:
-        """Handle a mouse-click event on the axes."""
+        """Handle a mouse-click event on the axes.
+
+        Aperture placement is skipped when the toolbar is in zoom or pan mode
+        so that the user can navigate the image freely without accidentally
+        triggering a measurement.
+        """
+        # Ignore clicks while the zoom or pan tool is active
+        toolbar = getattr(self.fig.canvas, "toolbar", None)
+        if toolbar is not None and getattr(toolbar, "mode", "") != "":
+            return
+
         if event.inaxes is not self.ax:
             return
         if event.xdata is None or event.ydata is None:

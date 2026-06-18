@@ -167,6 +167,25 @@ class TestDisplay:
         result = s.measure(50, 50, radius=10)
         s._update_status(result)
 
+    def test_click_ignored_during_zoom(self, tmp_path):
+        """No aperture is placed when the toolbar mode is zoom or pan."""
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+
+        # Simulate the toolbar being in zoom mode
+        class _FakeToolbar:
+            mode = "zoom rect"
+
+        s.fig.canvas.toolbar = _FakeToolbar()
+
+        class _FakeEvent:
+            inaxes = s.ax
+            xdata = 50.0
+            ydata = 50.0
+
+        s._on_click(_FakeEvent())
+        assert s.last_result is None  # no measurement should have been made
+
 
 class TestFitsVariants:
     """Test loading FITS files with various quirks."""
