@@ -32,6 +32,9 @@ This will display the FITS image.  **Click on any star** to:
 
 An **Aperture radius** slider appears below the image so you can adjust the
 aperture size interactively without clicking again.
+A **radial profile?** checkbox appears below the slider; when enabled, flyspanker
+plots a radial brightness profile from the centroid out to the current aperture
+radius and estimates the star FWHM.
 
 ### Parameters
 
@@ -50,7 +53,7 @@ The most recent measurement result is stored as `s.last_result`:
 print(s.last_result)
 # {'x': 312.4, 'y': 198.1,
 #  'x_centroid': 311.87, 'y_centroid': 197.65,
-#  'flux': 48312.5}
+#  'flux': 48312.5, 'fwhm': 6.42}
 ```
 
 ### Calling `measure()` programmatically
