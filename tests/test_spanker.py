@@ -74,6 +74,16 @@ class TestSpankerInit:
         s = Spanker(fitsfile)
         assert s.last_result is None
 
+    def test_calibration_defaults(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        assert s.calibration == {
+            "bias": False,
+            "dark": False,
+            "flat": False,
+            "cosmics": False,
+        }
+
     def test_nonexistent_file_raises(self, tmp_path):
         with pytest.raises(Exception):
             Spanker(tmp_path / "nonexistent.fits")
@@ -136,6 +146,41 @@ class TestMeasure:
         result = s.measure(42, 58, radius=12)
         assert abs(result["x_centroid"] - 40.0) < 1.5
         assert abs(result["y_centroid"] - 60.0) < 1.5
+
+
+class TestCalibration:
+    def test_calibrate_placeholder_returns_copy(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        calibrated = s.calibrate(
+            s.raw_data, bias=True, dark=True, flat=True, cosmics=True
+        )
+        assert np.array_equal(calibrated, s.raw_data)
+        assert calibrated is not s.raw_data
+
+    def test_apply_calibration_uses_checkbox_values(self, tmp_path, monkeypatch):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+
+        captured = {}
+
+        def _fake_calibrate(data, **kwargs):
+            captured.update(kwargs)
+            return np.array(data, copy=True)
+
+        monkeypatch.setattr(s, "calibrate", _fake_calibrate)
+        s._bias_checkbox.value = True
+        s._dark_checkbox.value = True
+        s._flat_checkbox.value = False
+        s._cosmics_checkbox.value = True
+        s._apply_calibration()
+
+        assert captured == {
+            "bias": True,
+            "dark": True,
+            "flat": False,
+            "cosmics": True,
+        }
 
 
 class TestDisplay:

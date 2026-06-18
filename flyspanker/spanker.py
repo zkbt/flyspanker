@@ -69,17 +69,29 @@ class Spanker:
         ext: int = 0,
         cmap: str = "gray",
         figsize: tuple[float, float] = (8, 8),
+        *,
+        bias: bool = False,
+        dark: bool = False,
+        flat: bool = False,
+        cosmics: bool = False,
     ) -> None:
         self.filename = Path(filename)
         self.ext = ext
         self.cmap = cmap
         self.figsize = figsize
+        self.calibration = {
+            "bias": bool(bias),
+            "dark": bool(dark),
+            "flat": bool(flat),
+            "cosmics": bool(cosmics),
+        }
 
         self.last_result: Optional[dict] = None
         self._aperture_patch: Optional[mpatches.Circle] = None
 
         # Load data
-        self.data, self.header = self._load_fits()
+        self.raw_data, self.header = self._load_fits()
+        self.data = self.calibrate(self.raw_data, **self.calibration)
 
         # Default aperture radius (pixels)
         self.radius: float = 10.0
@@ -113,14 +125,17 @@ class Spanker:
     # Display
     # ------------------------------------------------------------------
 
-    def _setup_display(self) -> None:
-        """Create the matplotlib figure and connect event handlers."""
-        # Compute display limits with ZScale
+    def _compute_display_limits(self) -> tuple[float, float]:
+        """Compute robust display limits from the current data."""
         interval = ZScaleInterval()
         try:
-            vmin, vmax = interval.get_limits(self.data)
+            return interval.get_limits(self.data)
         except Exception:
-            vmin, vmax = np.nanpercentile(self.data, [1, 99])
+            return np.nanpercentile(self.data, [1, 99])
+
+    def _setup_display(self) -> None:
+        """Create the matplotlib figure and connect event handlers."""
+        vmin, vmax = self._compute_display_limits()
 
         # Use plt.ioff() so that the ipympl backend does not auto-display the
         # figure inline.  We take control of display ourselves (via the HBox
@@ -187,10 +202,41 @@ class Spanker:
         )
         self._radius_slider.observe(self._on_radius_change, names="value")
 
+        self._calibration_label = widgets.HTML("<b>calibration</b>")
+        self._bias_checkbox = widgets.Checkbox(
+            value=self.calibration["bias"], description="bias"
+        )
+        self._dark_checkbox = widgets.Checkbox(
+            value=self.calibration["dark"], description="dark"
+        )
+        self._flat_checkbox = widgets.Checkbox(
+            value=self.calibration["flat"], description="flat"
+        )
+        self._cosmics_checkbox = widgets.Checkbox(
+            value=self.calibration["cosmics"], description="cosmics"
+        )
+        for checkbox in (
+            self._bias_checkbox,
+            self._dark_checkbox,
+            self._flat_checkbox,
+            self._cosmics_checkbox,
+        ):
+            checkbox.observe(self._on_calibration_change, names="value")
+
+        calibration_box = widgets.VBox(
+            [
+                self._calibration_label,
+                self._bias_checkbox,
+                self._dark_checkbox,
+                self._flat_checkbox,
+                self._cosmics_checkbox,
+            ]
+        )
+
         self._output_box = widgets.Output()
 
         controls = widgets.VBox(
-            [self._radius_slider, self._output_box],
+            [self._radius_slider, calibration_box, self._output_box],
             layout=widgets.Layout(padding="10px", align_items="center"),
         )
 
@@ -245,9 +291,71 @@ class Spanker:
             self._draw_aperture(result["x_centroid"], result["y_centroid"])
             self._update_status(result)
 
+    def _on_calibration_change(self, _change) -> None:
+        """Handle calibration-option checkbox changes."""
+        self._apply_calibration()
+
     # ------------------------------------------------------------------
     # Measurement
     # ------------------------------------------------------------------
+
+    def _get_calibration_options(self) -> dict:
+        """Return the current calibration options."""
+        if _HAS_WIDGETS and hasattr(self, "_bias_checkbox"):
+            return {
+                "bias": bool(self._bias_checkbox.value),
+                "dark": bool(self._dark_checkbox.value),
+                "flat": bool(self._flat_checkbox.value),
+                "cosmics": bool(self._cosmics_checkbox.value),
+            }
+        return dict(self.calibration)
+
+    def _apply_calibration(self) -> None:
+        """Apply current calibration settings and refresh display/measurement."""
+        self.calibration = self._get_calibration_options()
+        self.data = self.calibrate(self.raw_data, **self.calibration)
+
+        self.im.set_data(self.data)
+        vmin, vmax = self._compute_display_limits()
+        self.im.set_clim(vmin, vmax)
+
+        if self.last_result is not None:
+            result = self.measure(
+                self.last_result["x_centroid"],
+                self.last_result["y_centroid"],
+                self.radius,
+            )
+            self.last_result = result
+            self._draw_aperture(result["x_centroid"], result["y_centroid"])
+            self._update_status(result)
+        else:
+            self.fig.canvas.draw_idle()
+
+    def calibrate(
+        self,
+        data: np.ndarray,
+        *,
+        bias: bool = False,
+        dark: bool = False,
+        flat: bool = False,
+        cosmics: bool = False,
+    ) -> np.ndarray:
+        """Apply calibration steps to raw image data.
+
+        This is currently a placeholder that returns an unchanged copy.
+        """
+        calibrated = np.array(data, dtype=float, copy=True)
+
+        if bias:
+            pass
+        if dark:
+            pass
+        if flat:
+            pass
+        if cosmics:
+            pass
+
+        return calibrated
 
     def measure(self, x: float, y: float, radius: float) -> dict:
         """Measure centroid and flux inside a circular aperture.
