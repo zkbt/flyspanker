@@ -160,7 +160,7 @@ class TestMeasure:
             sky_outer_radius=20.0,
         )
         assert sub["flux"] < raw["flux"]
-        assert sub["background_per_pixel"] == pytest.approx(100.0, rel=0.1)
+        assert sub["background_per_pixel"] == pytest.approx(100.0, rel=0.05)
 
     def test_background_subtraction_matches_zero_background_case(self, tmp_path):
         fitsfile_bg = _make_fits(tmp_path, background=75.0, filename="with_bg.fits")
@@ -177,7 +177,7 @@ class TestMeasure:
             sky_outer_radius=20.0,
         )
         no_bg = s_no_bg.measure(50, 50, radius=10)
-        assert sub["flux"] == pytest.approx(no_bg["flux"], rel=0.08)
+        assert sub["flux"] == pytest.approx(no_bg["flux"], rel=0.05)
 
 
 class TestDisplay:

@@ -283,7 +283,10 @@ class Spanker:
         self._draw_aperture(result["x_centroid"], result["y_centroid"])
         if self.subtract_background:
             self._draw_sky_annulus(
-                result["x_centroid"], result["y_centroid"], result["sky_inner_radius"], result["sky_outer_radius"]
+                result["x_centroid"],
+                result["y_centroid"],
+                result["sky_inner_radius"],
+                result["sky_outer_radius"],
             )
         else:
             self._clear_sky_annulus()
@@ -333,7 +336,10 @@ class Spanker:
             self._draw_aperture(result["x_centroid"], result["y_centroid"])
             if self.subtract_background:
                 self._draw_sky_annulus(
-                    result["x_centroid"], result["y_centroid"], result["sky_inner_radius"], result["sky_outer_radius"]
+                    result["x_centroid"],
+                    result["y_centroid"],
+                    result["sky_inner_radius"],
+                    result["sky_outer_radius"],
                 )
             else:
                 self._clear_sky_annulus()
@@ -430,7 +436,7 @@ class Spanker:
             )
             if np.any(annulus_mask):
                 background_per_pixel = float(np.nanmedian(self.data[annulus_mask]))
-                background_flux = background_per_pixel * np.pi * r**2
+                background_flux = background_per_pixel * float(aperture.area)
                 flux = raw_flux - background_flux
 
         return {
