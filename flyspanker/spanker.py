@@ -122,7 +122,11 @@ class Spanker:
         except Exception:
             vmin, vmax = np.nanpercentile(self.data, [1, 99])
 
-        self.fig, self.ax = plt.subplots(figsize=self.figsize)
+        # Use plt.ioff() so that the ipympl backend does not auto-display the
+        # figure inline.  We take control of display ourselves (via the HBox
+        # below), which prevents a duplicate figure from appearing.
+        with plt.ioff():
+            self.fig, self.ax = plt.subplots(figsize=self.figsize)
         self.ax.set_title(self.filename.name)
         self.im = self.ax.imshow(
             self.data,
