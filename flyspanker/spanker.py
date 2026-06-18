@@ -344,18 +344,8 @@ class Spanker:
 
         This is currently a placeholder that returns an unchanged copy.
         """
-        calibrated = np.array(data, dtype=float, copy=True)
-
-        if bias:
-            pass
-        if dark:
-            pass
-        if flat:
-            pass
-        if cosmics:
-            pass
-
-        return calibrated
+        # TODO: implement the individual calibration operations.
+        return np.array(data, copy=True)
 
     def measure(self, x: float, y: float, radius: float) -> dict:
         """Measure centroid and flux inside a circular aperture.
