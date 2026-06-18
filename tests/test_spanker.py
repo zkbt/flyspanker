@@ -28,19 +28,20 @@ from flyspanker import Spanker
 def _make_fits(tmp_path: Path, *, nx: int = 100, ny: int = 100,
                star_x: float = 50.0, star_y: float = 50.0,
                amplitude: float = 1000.0, sigma: float = 3.0,
-               noise: float = 0.0) -> Path:
+               noise: float = 0.0, background: float = 0.0,
+               filename: str = "test_image.fits") -> Path:
     """Create a FITS file with a synthetic Gaussian star and return its path."""
     x = np.arange(nx, dtype=float)
     y = np.arange(ny, dtype=float)
     xx, yy = np.meshgrid(x, y)
-    data = amplitude * np.exp(
+    data = background + amplitude * np.exp(
         -((xx - star_x) ** 2 + (yy - star_y) ** 2) / (2 * sigma ** 2)
     )
     if noise > 0:
         rng = np.random.default_rng(42)
         data += rng.normal(0, noise, data.shape)
 
-    fitsfile = tmp_path / "test_image.fits"
+    fitsfile = tmp_path / filename
     hdu = fits.PrimaryHDU(data=data.astype(np.float32))
     hdu.writeto(fitsfile, overwrite=True)
     return fitsfile
@@ -114,6 +115,15 @@ class TestMeasure:
         result = s.measure(50, 50, radius=10)
         for key in ("x", "y", "x_centroid", "y_centroid", "flux"):
             assert key in result
+        for key in (
+            "raw_flux",
+            "background_per_pixel",
+            "background_flux",
+            "subtract_background",
+            "sky_inner_radius",
+            "sky_outer_radius",
+        ):
+            assert key in result
 
     def test_click_out_of_bounds_does_not_crash(self, tmp_path):
         """Clicking far outside valid data should return nan flux gracefully."""
@@ -136,6 +146,38 @@ class TestMeasure:
         result = s.measure(42, 58, radius=12)
         assert abs(result["x_centroid"] - 40.0) < 1.5
         assert abs(result["y_centroid"] - 60.0) < 1.5
+
+    def test_background_subtraction_reduces_flux(self, tmp_path):
+        fitsfile = _make_fits(tmp_path, background=100.0)
+        s = Spanker(fitsfile)
+        raw = s.measure(50, 50, radius=10)
+        sub = s.measure(
+            50,
+            50,
+            radius=10,
+            subtract_background=True,
+            sky_gap=3.0,
+            sky_outer_radius=20.0,
+        )
+        assert sub["flux"] < raw["flux"]
+        assert sub["background_per_pixel"] == pytest.approx(100.0, rel=0.1)
+
+    def test_background_subtraction_matches_zero_background_case(self, tmp_path):
+        fitsfile_bg = _make_fits(tmp_path, background=75.0, filename="with_bg.fits")
+        fitsfile_no_bg = _make_fits(tmp_path, background=0.0, filename="no_bg.fits")
+        s_bg = Spanker(fitsfile_bg)
+        s_no_bg = Spanker(fitsfile_no_bg)
+
+        sub = s_bg.measure(
+            50,
+            50,
+            radius=10,
+            subtract_background=True,
+            sky_gap=3.0,
+            sky_outer_radius=20.0,
+        )
+        no_bg = s_no_bg.measure(50, 50, radius=10)
+        assert sub["flux"] == pytest.approx(no_bg["flux"], rel=0.08)
 
 
 class TestDisplay:
