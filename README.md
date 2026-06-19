@@ -33,6 +33,10 @@ This will display the FITS image.  **Click on any star** to:
 An **Aperture radius** slider appears below the image so you can adjust the
 aperture size interactively without clicking again.
 
+A **calibration** section appears in the controls with checkboxes for `bias`,
+`dark`, `flat`, and `cosmics`. These options currently call a placeholder
+calibration pipeline before display.
+
 ### Parameters
 
 | Parameter | Default | Description |
@@ -41,6 +45,10 @@ aperture size interactively without clicking again.
 | `ext` | `0` | FITS extension index to read |
 | `cmap` | `'gray'` | Matplotlib colormap |
 | `figsize` | `(8, 8)` | Figure size in inches |
+| `bias` | `False` | Enable placeholder bias calibration |
+| `dark` | `False` | Enable placeholder dark calibration |
+| `flat` | `False` | Enable placeholder flat calibration |
+| `cosmics` | `False` | Enable placeholder cosmic-ray calibration |
 
 ### Accessing measurements
 
