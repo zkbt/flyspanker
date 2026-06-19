@@ -209,6 +209,27 @@ class TestDisplay:
         result = s.measure(50, 50, radius=10)
         s._update_status(result)
 
+    def test_auto_centroid_default_true(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        assert s.auto_centroid is True
+
+    def test_auto_centroid_toggle_moves_aperture(self, tmp_path):
+        """Toggling auto_centroid=False keeps the aperture at the original click."""
+        fitsfile = _make_fits(tmp_path, star_x=50.0, star_y=50.0)
+        s = Spanker(fitsfile)
+        s.auto_centroid = False
+
+        class _FakeEvent:
+            inaxes = s.ax
+            xdata = 55.0
+            ydata = 45.0
+
+        s._on_click(_FakeEvent())
+        assert s.last_result is not None
+        assert s.last_result["x_centroid"] == 55.0
+        assert s.last_result["y_centroid"] == 45.0
+
     def test_click_ignored_during_zoom(self, tmp_path):
         """No aperture is placed when the toolbar mode is zoom or pan."""
         fitsfile = _make_fits(tmp_path)
