@@ -27,6 +27,7 @@ from astropy.io import fits
 from astropy.visualization import ZScaleInterval
 from photutils.aperture import CircularAperture, aperture_photometry
 from photutils.centroids import centroid_com
+from photutils.profiles import RadialProfile
 
 try:
     import ipywidgets as widgets
@@ -35,6 +36,9 @@ try:
     _HAS_WIDGETS = True
 except ImportError:  # pragma: no cover
     _HAS_WIDGETS = False
+
+_MIN_RADIAL_BINS = 2
+_FLAT_PROFILE_STD_TOL = 1e-10
 
 
 class Spanker:
@@ -63,7 +67,7 @@ class Spanker:
         where the user clicked.
     last_result : dict or None
         Dictionary with keys ``x``, ``y``, ``x_centroid``, ``y_centroid``,
-        and ``flux`` from the most recent aperture measurement, or ``None``
+        ``flux``, and ``fwhm`` from the most recent aperture measurement, or ``None``
         if no measurement has been made yet.
     """
 
@@ -91,7 +95,9 @@ class Spanker:
         }
 
         self.last_result: Optional[dict] = None
+        self._last_radial_profile: Optional[dict] = None
         self._aperture_patch: Optional[mpatches.Circle] = None
+        self.show_radial_profile: bool = False
         self._annulus_inner_patch: Optional[mpatches.Circle] = None
         self._annulus_outer_patch: Optional[mpatches.Circle] = None
 
@@ -213,6 +219,12 @@ class Spanker:
             orientation="vertical",
         )
         self._radius_slider.observe(self._on_radius_change, names="value")
+        self._radial_profile_checkbox = widgets.Checkbox(
+            value=self.show_radial_profile,
+            description="radial profile?",
+            indent=False,
+        )
+        self._radial_profile_checkbox.observe(self._on_radial_profile_toggle, names="value")
 
         self._calibration_label = widgets.HTML("<b>calibration</b>")
         self._bias_checkbox = widgets.Checkbox(
@@ -280,9 +292,10 @@ class Spanker:
         self._output_box = widgets.Output()
 
         controls = widgets.VBox(
-            [self._radius_slider, calibration_box, self._output_box],
             [
                 self._radius_slider,
+                self._radial_profile_checkbox,
+                calibration_box,
                 self._subtract_background_checkbox,
                 self._sky_gap_slider,
                 self._sky_outer_slider,
@@ -438,6 +451,50 @@ class Spanker:
         else:
             self.fig.canvas.draw_idle()
 
+    def _on_radial_profile_toggle(self, change) -> None:
+        """Handle radial-profile checkbox changes."""
+        self.show_radial_profile = bool(change["new"])
+        self._remeasure_last_result()
+
+    # ------------------------------------------------------------------
+    # Measurement
+    # ------------------------------------------------------------------
+
+    def _compute_radial_profile(self, x: float, y: float, radius: float) -> dict:
+        """Compute radial profile and FWHM out to the aperture radius."""
+        r = max(1.0, float(radius))
+        # Build bin edges that always include both 0 and the exact aperture edge.
+        edge_radii = np.linspace(
+            0.0, r, max(_MIN_RADIAL_BINS, int(np.ceil(r)) + 1)
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            profile = RadialProfile(self.data, (x, y), edge_radii)
+        profile_values = np.asarray(profile.profile, dtype=float)
+
+        fwhm: Optional[float]
+        finite_profile = profile_values[np.isfinite(profile_values)]
+        is_flat_profile = (
+            finite_profile.size == 0
+            or np.nanstd(finite_profile) < _FLAT_PROFILE_STD_TOL
+        )
+        if is_flat_profile:
+            fwhm = None
+        else:
+            try:
+                fwhm_val = float(profile.gaussian_fwhm)
+                fwhm = fwhm_val if np.isfinite(fwhm_val) else None
+            except Exception:
+                fwhm = None
+
+        return {
+            "radius": np.asarray(profile.radius, dtype=float),
+            "profile": profile_values,
+            "edge_radii": np.asarray(edge_radii, dtype=float),
+            "fwhm": fwhm,
+        }
+
     def calibrate(
         self,
         data: np.ndarray,
@@ -454,12 +511,13 @@ class Spanker:
         # TODO: implement the individual calibration operations.
         return np.array(data, copy=True)
 
-    def measure(self, x: float, y: float, radius: float) -> dict:
     def measure(
         self,
         x: float,
         y: float,
         radius: float,
+        centroid: Optional[bool] = None,
+        compute_radial_profile: Optional[bool] = None,
         subtract_background: bool = False,
         sky_gap: float = 3.0,
         sky_outer_radius: float | None = None,
@@ -477,67 +535,65 @@ class Spanker:
             When ``True`` (default) the aperture centre is refined to the
             flux-weighted centroid of pixels within the aperture.  When
             ``False`` the aperture is placed exactly at ``(x, y)``.
+        compute_radial_profile : bool, optional
+            If ``True``, compute a radial profile out to the aperture radius and
+            estimate FWHM with photutils. If ``None``, use the
+            ``self.show_radial_profile`` setting.
 
         Returns
         -------
         dict
             Keys: ``x`` (input x), ``y`` (input y),
-            ``x_centroid``, ``y_centroid``, ``flux``.
+            ``x_centroid``, ``y_centroid``, ``flux``, ``fwhm``.
         """
         ny, nx = self.data.shape
         r = max(1.0, float(radius))
+        should_centroid = self.auto_centroid if centroid is None else bool(centroid)
         sky_inner_radius = r + max(0.0, float(sky_gap))
         if sky_outer_radius is None:
             sky_outer_radius = sky_inner_radius + r
         sky_outer_radius = max(float(sky_outer_radius), sky_inner_radius + 1.0)
 
-        if not centroid:
+        if not should_centroid:
             # Place aperture exactly at the click position without centroiding
             x_centroid = float(np.clip(x, 0, nx - 1))
             y_centroid = float(np.clip(y, 0, ny - 1))
-            aperture = CircularAperture((x_centroid, y_centroid), r=r)
+        else:
+            # Extract a bounding box around the click position for centroiding
+            x0 = int(max(0, np.floor(x - r)))
+            x1 = int(min(nx, np.ceil(x + r) + 1))
+            y0 = int(max(0, np.floor(y - r)))
+            y1 = int(min(ny, np.ceil(y + r) + 1))
+
+            cutout = self.data[y0:y1, x0:x1]
+
+            if cutout.size == 0 or np.all(~np.isfinite(cutout)):
+                self._last_radial_profile = None
+                return {
+                    "x": x,
+                    "y": y,
+                    "x_centroid": x,
+                    "y_centroid": y,
+                    "flux": np.nan,
+                    "fwhm": None,
+                    "raw_flux": np.nan,
+                    "background_per_pixel": np.nan,
+                    "background_flux": np.nan,
+                    "subtract_background": bool(subtract_background),
+                    "sky_inner_radius": sky_inner_radius,
+                    "sky_outer_radius": sky_outer_radius,
+                }
+
+            # Centroid (within the cutout, then convert back to full-image coords)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                phot_table = aperture_photometry(self.data, aperture)
-            flux = float(phot_table["aperture_sum"][0])
-            return {
-                "x": x,
-                "y": y,
-                "x_centroid": x_centroid,
-                "y_centroid": y_centroid,
-                "flux": flux,
-            }
+                xc_cut, yc_cut = centroid_com(cutout)
 
-        # Extract a bounding box around the click position for centroiding
-        x0 = int(max(0, np.floor(x - r)))
-        x1 = int(min(nx, np.ceil(x + r) + 1))
-        y0 = int(max(0, np.floor(y - r)))
-        y1 = int(min(ny, np.ceil(y + r) + 1))
-
-        cutout = self.data[y0:y1, x0:x1]
-
-        if cutout.size == 0 or np.all(~np.isfinite(cutout)):
-            return {
-                "x": x,
-                "y": y,
-                "x_centroid": x,
-                "y_centroid": y,
-                "flux": np.nan,
-                "raw_flux": np.nan,
-                "background_per_pixel": np.nan,
-                "background_flux": np.nan,
-                "subtract_background": bool(subtract_background),
-                "sky_inner_radius": sky_inner_radius,
-                "sky_outer_radius": sky_outer_radius,
-            }
-
-        # Centroid (within the cutout, then convert back to full-image coords)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            xc_cut, yc_cut = centroid_com(cutout)
-
-        x_centroid = x0 + xc_cut
-        y_centroid = y0 + yc_cut
+            x_centroid = x0 + xc_cut
+            y_centroid = y0 + yc_cut
+            if not np.isfinite(x_centroid) or not np.isfinite(y_centroid):
+                x_centroid = x
+                y_centroid = y
 
         # Clamp centroid to image bounds
         x_centroid = float(np.clip(x_centroid, 0, nx - 1))
@@ -566,12 +622,26 @@ class Spanker:
                 background_flux = background_per_pixel * float(aperture.area)
                 flux = raw_flux - background_flux
 
+        should_compute_profile = (
+            self.show_radial_profile
+            if compute_radial_profile is None
+            else bool(compute_radial_profile)
+        )
+
+        fwhm = None
+        self._last_radial_profile = None
+        if should_compute_profile:
+            radial_profile = self._compute_radial_profile(x_centroid, y_centroid, r)
+            self._last_radial_profile = radial_profile
+            fwhm = radial_profile["fwhm"]
+
         return {
             "x": x,
             "y": y,
             "x_centroid": x_centroid,
             "y_centroid": y_centroid,
             "flux": flux,
+            "fwhm": fwhm,
             "raw_flux": raw_flux,
             "background_per_pixel": background_per_pixel,
             "background_flux": background_flux,
@@ -648,6 +718,8 @@ class Spanker:
                 f"  bg={result['background_per_pixel']:.4g}/px"
                 f"  sky=[{result['sky_inner_radius']:.1f},{result['sky_outer_radius']:.1f}]"
             )
+        if result.get("fwhm") is not None:
+            msg += f"  fwhm={result['fwhm']:.2f} px"
         self._status_text.set_text(msg)
         self.fig.canvas.draw_idle()
 
@@ -666,6 +738,29 @@ class Spanker:
                         f"Sky ann. : {result['sky_inner_radius']:.1f}–{result['sky_outer_radius']:.1f} px"
                     )
                 print(f"Radius   : {self.radius:.1f} px")
+                if result.get("fwhm") is not None:
+                    print(f"FWHM     : {result['fwhm']:.3f} px")
+                if self.show_radial_profile and self._last_radial_profile is not None:
+                    fig, ax = plt.subplots(figsize=(4, 3))
+                    radius = self._last_radial_profile["radius"]
+                    profile = self._last_radial_profile["profile"]
+                    ax.plot(radius, profile, marker="o", linestyle="-", color="tab:blue")
+                    ax.set_xlim(0, self.radius)
+                    ax.set_xlabel("Radius (px)")
+                    ax.set_ylabel("Mean brightness")
+                    ax.set_title("Radial profile")
+                    fwhm = self._last_radial_profile["fwhm"]
+                    if fwhm is not None:
+                        ax.axvline(
+                            fwhm / 2.0,
+                            color="tab:red",
+                            linestyle="--",
+                            label=f"FWHM/2 = {fwhm / 2.0:.2f} px",
+                        )
+                        ax.legend(loc="best")
+                    fig.tight_layout()
+                    ipython_display(fig)
+                    plt.close(fig)
 
     # ------------------------------------------------------------------
     # Convenience

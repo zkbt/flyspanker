@@ -123,7 +123,7 @@ class TestMeasure:
         fitsfile = _make_fits(tmp_path)
         s = Spanker(fitsfile)
         result = s.measure(50, 50, radius=10)
-        for key in ("x", "y", "x_centroid", "y_centroid", "flux"):
+        for key in ("x", "y", "x_centroid", "y_centroid", "flux", "fwhm"):
             assert key in result
         for key in (
             "raw_flux",
@@ -156,6 +156,34 @@ class TestMeasure:
         result = s.measure(42, 58, radius=12)
         assert abs(result["x_centroid"] - 40.0) < 1.5
         assert abs(result["y_centroid"] - 60.0) < 1.5
+
+    def test_fwhm_none_when_profile_not_requested(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        result = s.measure(50, 50, radius=10, compute_radial_profile=False)
+        assert result["fwhm"] is None
+        assert s._last_radial_profile is None
+
+    def test_fwhm_present_when_profile_requested(self, tmp_path):
+        fitsfile = _make_fits(tmp_path, sigma=3.0)
+        s = Spanker(fitsfile)
+        result = s.measure(50, 50, radius=15, compute_radial_profile=True)
+        assert result["fwhm"] is not None
+        assert result["fwhm"] > 0
+
+    def test_radial_profile_extent_matches_aperture_radius(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        radius = 12.5
+        s.measure(50, 50, radius=radius, compute_radial_profile=True)
+        assert s._last_radial_profile is not None
+        assert s._last_radial_profile["edge_radii"][-1] == pytest.approx(radius)
+
+    def test_fwhm_fallback_for_flat_image(self, tmp_path):
+        fitsfile = _make_fits(tmp_path, amplitude=0.0)
+        s = Spanker(fitsfile)
+        result = s.measure(50, 50, radius=10, compute_radial_profile=True)
+        assert result["fwhm"] is None
 
     def test_background_subtraction_reduces_flux(self, tmp_path):
         fitsfile = _make_fits(tmp_path, background=100.0)
@@ -293,6 +321,13 @@ class TestDisplay:
 
         s._on_click(_FakeEvent())
         assert s.last_result is None  # no measurement should have been made
+
+    def test_radial_profile_toggle_updates_state(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        assert s.show_radial_profile is False
+        s._on_radial_profile_toggle({"new": True})
+        assert s.show_radial_profile is True
 
 
 class TestFitsVariants:
