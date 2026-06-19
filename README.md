@@ -36,6 +36,10 @@ A **radial profile?** checkbox appears below the slider; when enabled, flyspanke
 plots a radial brightness profile from the centroid out to the current aperture
 radius and estimates the star FWHM.
 
+A **calibration** section appears in the controls with checkboxes for `bias`,
+`dark`, `flat`, and `cosmics`. These options currently call a placeholder
+calibration pipeline before display.
+
 ### Parameters
 
 | Parameter | Default | Description |
@@ -44,6 +48,10 @@ radius and estimates the star FWHM.
 | `ext` | `0` | FITS extension index to read |
 | `cmap` | `'gray'` | Matplotlib colormap |
 | `figsize` | `(8, 8)` | Figure size in inches |
+| `bias` | `False` | Enable placeholder bias calibration |
+| `dark` | `False` | Enable placeholder dark calibration |
+| `flat` | `False` | Enable placeholder flat calibration |
+| `cosmics` | `False` | Enable placeholder cosmic-ray calibration |
 
 ### Accessing measurements
 
