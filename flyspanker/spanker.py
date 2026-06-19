@@ -57,6 +57,10 @@ class Spanker:
         2-D image array loaded from the FITS file.
     radius : float
         Current aperture radius in pixels.
+    auto_centroid : bool
+        When ``True`` (default) the aperture is moved to the flux-weighted
+        centroid after each click.  When ``False`` the aperture stays exactly
+        where the user clicked.
     last_result : dict or None
         Dictionary with keys ``x``, ``y``, ``x_centroid``, ``y_centroid``,
         and ``flux`` from the most recent aperture measurement, or ``None``
@@ -77,6 +81,9 @@ class Spanker:
 
         self.last_result: Optional[dict] = None
         self._aperture_patch: Optional[mpatches.Circle] = None
+
+        # Whether to auto-centroid on each click
+        self.auto_centroid: bool = True
 
         # Load data
         self.data, self.header = self._load_fits()
@@ -187,10 +194,17 @@ class Spanker:
         )
         self._radius_slider.observe(self._on_radius_change, names="value")
 
+        self._centroid_checkbox = widgets.Checkbox(
+            value=self.auto_centroid,
+            description="auto-centroid?",
+            style={"description_width": "initial"},
+        )
+        self._centroid_checkbox.observe(self._on_centroid_change, names="value")
+
         self._output_box = widgets.Output()
 
         controls = widgets.VBox(
-            [self._radius_slider, self._output_box],
+            [self._radius_slider, self._centroid_checkbox, self._output_box],
             layout=widgets.Layout(padding="10px", align_items="center"),
         )
 
@@ -226,7 +240,7 @@ class Spanker:
         x_click = event.xdata
         y_click = event.ydata
 
-        result = self.measure(x_click, y_click, self.radius)
+        result = self.measure(x_click, y_click, self.radius, centroid=self.auto_centroid)
         self.last_result = result
 
         self._draw_aperture(result["x_centroid"], result["y_centroid"])
@@ -240,6 +254,21 @@ class Spanker:
                 self.last_result["x_centroid"],
                 self.last_result["y_centroid"],
                 self.radius,
+                centroid=self.auto_centroid,
+            )
+            self.last_result = result
+            self._draw_aperture(result["x_centroid"], result["y_centroid"])
+            self._update_status(result)
+
+    def _on_centroid_change(self, change) -> None:
+        """Handle auto-centroid checkbox change."""
+        self.auto_centroid = bool(change["new"])
+        if self.last_result is not None:
+            result = self.measure(
+                self.last_result["x"],
+                self.last_result["y"],
+                self.radius,
+                centroid=self.auto_centroid,
             )
             self.last_result = result
             self._draw_aperture(result["x_centroid"], result["y_centroid"])
@@ -249,7 +278,7 @@ class Spanker:
     # Measurement
     # ------------------------------------------------------------------
 
-    def measure(self, x: float, y: float, radius: float) -> dict:
+    def measure(self, x: float, y: float, radius: float, centroid: bool = True) -> dict:
         """Measure centroid and flux inside a circular aperture.
 
         Parameters
@@ -259,6 +288,10 @@ class Spanker:
             0-indexed, column/row).
         radius : float
             Aperture radius in pixels.
+        centroid : bool, optional
+            When ``True`` (default) the aperture centre is refined to the
+            flux-weighted centroid of pixels within the aperture.  When
+            ``False`` the aperture is placed exactly at ``(x, y)``.
 
         Returns
         -------
@@ -268,6 +301,23 @@ class Spanker:
         """
         ny, nx = self.data.shape
         r = max(1.0, float(radius))
+
+        if not centroid:
+            # Place aperture exactly at the click position without centroiding
+            x_centroid = float(np.clip(x, 0, nx - 1))
+            y_centroid = float(np.clip(y, 0, ny - 1))
+            aperture = CircularAperture((x_centroid, y_centroid), r=r)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                phot_table = aperture_photometry(self.data, aperture)
+            flux = float(phot_table["aperture_sum"][0])
+            return {
+                "x": x,
+                "y": y,
+                "x_centroid": x_centroid,
+                "y_centroid": y_centroid,
+                "flux": flux,
+            }
 
         # Extract a bounding box around the click position for centroiding
         x0 = int(max(0, np.floor(x - r)))

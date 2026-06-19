@@ -137,6 +137,21 @@ class TestMeasure:
         assert abs(result["x_centroid"] - 40.0) < 1.5
         assert abs(result["y_centroid"] - 60.0) < 1.5
 
+    def test_no_centroid_places_aperture_at_click(self, tmp_path):
+        """With centroid=False the aperture stays exactly at the click position."""
+        fitsfile = _make_fits(tmp_path, star_x=50.0, star_y=50.0)
+        s = Spanker(fitsfile)
+        result = s.measure(53, 47, radius=10, centroid=False)
+        assert result["x_centroid"] == 53.0
+        assert result["y_centroid"] == 47.0
+
+    def test_no_centroid_still_returns_flux(self, tmp_path):
+        """With centroid=False flux is still measured at the click position."""
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        result = s.measure(50, 50, radius=10, centroid=False)
+        assert result["flux"] > 0
+
 
 class TestDisplay:
     """Smoke tests: verify the figure and axes are created without errors."""
@@ -166,6 +181,27 @@ class TestDisplay:
         s = Spanker(fitsfile)
         result = s.measure(50, 50, radius=10)
         s._update_status(result)
+
+    def test_auto_centroid_default_true(self, tmp_path):
+        fitsfile = _make_fits(tmp_path)
+        s = Spanker(fitsfile)
+        assert s.auto_centroid is True
+
+    def test_auto_centroid_toggle_moves_aperture(self, tmp_path):
+        """Toggling auto_centroid=False keeps the aperture at the original click."""
+        fitsfile = _make_fits(tmp_path, star_x=50.0, star_y=50.0)
+        s = Spanker(fitsfile)
+        s.auto_centroid = False
+
+        class _FakeEvent:
+            inaxes = s.ax
+            xdata = 55.0
+            ydata = 45.0
+
+        s._on_click(_FakeEvent())
+        assert s.last_result is not None
+        assert s.last_result["x_centroid"] == 55.0
+        assert s.last_result["y_centroid"] == 45.0
 
     def test_click_ignored_during_zoom(self, tmp_path):
         """No aperture is placed when the toolbar mode is zoom or pan."""
