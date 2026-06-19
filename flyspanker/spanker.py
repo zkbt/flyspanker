@@ -109,7 +109,7 @@ class Spanker:
         self.data = self.calibrate(self.raw_data, **self.calibration)
 
         # Default aperture radius (pixels)
-        self.radius: float = 10.0
+        self.aperture_radius: float = 10.0
         self.subtract_background: bool = False
         self.sky_gap: float = 3.0
         self.sky_outer_radius: float = 20.0
@@ -205,27 +205,57 @@ class Spanker:
         so we embed it together with the controls in an HBox.  In other backends
         (e.g. Agg during testing) the controls are displayed on their own.
         """
+
+
+        # how big should the aperture radius be? 
         ny, nx = self.data.shape
         max_radius = min(nx, ny) // 4
-
-        self._radius_slider = widgets.FloatSlider(
-            value=self.radius,
+        self._aperture_radius_slider = widgets.FloatSlider(
+            value=self.aperture_radius,
             min=1.0,
             max=float(max_radius),
             step=0.5,
             description="Radius (px):",
             style={"description_width": "initial"},
             layout=widgets.Layout(height="200px"),
-            orientation="vertical",
         )
-        self._radius_slider.observe(self._on_radius_change, names="value")
-        self._radial_profile_checkbox = widgets.Checkbox(
-            value=self.show_radial_profile,
-            description="radial profile?",
+        self._aperture_radius_slider.observe(self._on_radius_change, names="value")
+
+        # should we subtract the sky?
+        max_sky_radius = max(float(max_radius), self.aperture_radius + self.sky_gap + 2.0)
+        self._subtract_background_checkbox = widgets.Checkbox(
+            value=self.subtract_background,
+            description="subtract background?",
             indent=False,
         )
-        self._radial_profile_checkbox.observe(self._on_radial_profile_toggle, names="value")
+        self._subtract_background_checkbox.observe(
+            self._on_background_toggle, names="value"
+        )
 
+        self._sky_gap_slider = widgets.FloatSlider(
+            value=self.sky_gap,
+            min=0.0,
+            max=max_sky_radius,
+            step=0.5,
+            description="Sky gap (px):",
+            style={"description_width": "initial"},
+            layout=widgets.Layout(width="250px"),
+        )
+        self._sky_gap_slider.observe(self._on_sky_annulus_change, names="value")
+
+        self._sky_outer_slider = widgets.FloatSlider(
+            value=self.sky_outer_radius,
+            min=self.aperture_radius + self.sky_gap + 1.0,
+            max=max_sky_radius,
+            step=0.5,
+            description="Sky outer r (px):",
+            style={"description_width": "initial"},
+            layout=widgets.Layout(width="250px"),
+        )
+        self._sky_outer_slider.observe(self._on_sky_annulus_change, names="value")
+        self._enforce_sky_slider_constraints()
+
+        # should we calibrate the image? 
         self._calibration_label = widgets.HTML("<b>calibration</b>")
         self._bias_checkbox = widgets.Checkbox(
             value=self.calibration["bias"], description="bias"
@@ -256,59 +286,37 @@ class Spanker:
                 self._cosmics_checkbox,
             ]
         )
-        max_sky_radius = max(float(max_radius), self.radius + self.sky_gap + 2.0)
-        self._subtract_background_checkbox = widgets.Checkbox(
-            value=self.subtract_background,
-            description="subtract background?",
+
+
+        # should we plot a radial profile of the source? 
+        self._radial_profile_checkbox = widgets.Checkbox(
+            value=self.show_radial_profile,
+            description="radial profile?",
             indent=False,
         )
-        self._subtract_background_checkbox.observe(
-            self._on_background_toggle, names="value"
-        )
+        self._radial_profile_checkbox.observe(self._on_radial_profile_toggle, names="value")
 
-        self._sky_gap_slider = widgets.FloatSlider(
-            value=self.sky_gap,
-            min=0.0,
-            max=max_sky_radius,
-            step=0.5,
-            description="Sky gap (px):",
-            style={"description_width": "initial"},
-            layout=widgets.Layout(width="250px"),
-        )
-        self._sky_gap_slider.observe(self._on_sky_annulus_change, names="value")
-
-        self._sky_outer_slider = widgets.FloatSlider(
-            value=self.sky_outer_radius,
-            min=self.radius + self.sky_gap + 1.0,
-            max=max_sky_radius,
-            step=0.5,
-            description="Sky outer r (px):",
-            style={"description_width": "initial"},
-            layout=widgets.Layout(width="250px"),
-        )
-        self._sky_outer_slider.observe(self._on_sky_annulus_change, names="value")
-        self._enforce_sky_slider_constraints()
 
         self._output_box = widgets.Output()
 
         controls = widgets.VBox(
             [
-                self._radius_slider,
-                self._radial_profile_checkbox,
-                calibration_box,
+                self._aperture_radius_slider,
                 self._subtract_background_checkbox,
                 self._sky_gap_slider,
                 self._sky_outer_slider,
+                self._radial_profile_checkbox,
+                calibration_box,
                 self._output_box,
             ],
-            layout=widgets.Layout(padding="10px", align_items="center"),
+            layout=widgets.Layout(padding="10px",  border='solid', align_items="center"),
         )
 
         # With the ipympl backend the canvas is a widget; place the figure
         # and controls side-by-side in an HBox.  In other backends fall back
         # to displaying only the controls panel (the figure is shown normally).
         if isinstance(self.fig.canvas, widgets.Widget):
-            ipython_display(widgets.HBox([self.fig.canvas, controls]))
+            ipython_display(widgets.HBox([controls, self.fig.canvas]))
         else:
             ipython_display(controls)
 
@@ -339,7 +347,7 @@ class Spanker:
         result = self.measure(
             x_click,
             y_click,
-            self.radius,
+            self.aperture_radius,
             subtract_background=self.subtract_background,
             sky_gap=self.sky_gap,
             sky_outer_radius=self.sky_outer_radius,
@@ -360,7 +368,7 @@ class Spanker:
 
     def _on_radius_change(self, change) -> None:
         """Handle aperture-radius slider change."""
-        self.radius = float(change["new"])
+        self.aperture_radius = float(change["new"])
         self._enforce_sky_slider_constraints()
         self._remeasure_last_result()
 
@@ -378,7 +386,7 @@ class Spanker:
 
     def _enforce_sky_slider_constraints(self) -> None:
         """Keep the sky-annulus sliders in a valid geometry."""
-        min_outer = self.radius + self.sky_gap + 1.0
+        min_outer = self.aperture_radius + self.sky_gap + 1.0
         self.sky_outer_radius = max(self.sky_outer_radius, min_outer)
 
         if _HAS_WIDGETS and hasattr(self, "_sky_outer_slider"):
@@ -393,7 +401,7 @@ class Spanker:
             result = self.measure(
                 self.last_result["x_centroid"],
                 self.last_result["y_centroid"],
-                self.radius,
+                self.aperture_radius,
                 subtract_background=self.subtract_background,
                 sky_gap=self.sky_gap,
                 sky_outer_radius=self.sky_outer_radius,
@@ -443,7 +451,7 @@ class Spanker:
             result = self.measure(
                 self.last_result["x_centroid"],
                 self.last_result["y_centroid"],
-                self.radius,
+                self.aperture_radius,
             )
             self.last_result = result
             self._draw_aperture(result["x_centroid"], result["y_centroid"])
@@ -661,7 +669,7 @@ class Spanker:
 
         self._aperture_patch = mpatches.Circle(
             (x, y),
-            radius=self.radius,
+            radius=self.aperture_radius,
             edgecolor="red",
             facecolor="none",
             linewidth=1.5,
@@ -709,7 +717,7 @@ class Spanker:
         """Update the status text overlay and the widget output box."""
         msg = (
             f"x={result['x_centroid']:.2f}  y={result['y_centroid']:.2f}  "
-            f"flux={result['flux']:.4g}  r={self.radius:.1f} px"
+            f"flux={result['flux']:.4g}  r={self.aperture_radius:.1f} px"
         )
         if result.get("subtract_background", False) and np.isfinite(
             result.get("background_per_pixel", np.nan)
@@ -737,7 +745,7 @@ class Spanker:
                     print(
                         f"Sky ann. : {result['sky_inner_radius']:.1f}–{result['sky_outer_radius']:.1f} px"
                     )
-                print(f"Radius   : {self.radius:.1f} px")
+                print(f"Radius   : {self.aperture_radius:.1f} px")
                 if result.get("fwhm") is not None:
                     print(f"FWHM     : {result['fwhm']:.3f} px")
                 if self.show_radial_profile and self._last_radial_profile is not None:
@@ -745,7 +753,7 @@ class Spanker:
                     radius = self._last_radial_profile["radius"]
                     profile = self._last_radial_profile["profile"]
                     ax.plot(radius, profile, marker="o", linestyle="-", color="tab:blue")
-                    ax.set_xlim(0, self.radius)
+                    ax.set_xlim(0, self.aperture_radius)
                     ax.set_xlabel("Radius (px)")
                     ax.set_ylabel("Mean brightness")
                     ax.set_title("Radial profile")
@@ -769,5 +777,5 @@ class Spanker:
     def __repr__(self) -> str:
         return (
             f"Spanker(filename='{self.filename}', "
-            f"shape={self.data.shape}, radius={self.radius})"
+            f"shape={self.data.shape}, radius={self.aperture_radius})"
         )
