@@ -1,3 +1,9 @@
+.DS_Store 
+*.fit
+*.fits
+*.fit.fz 
+*.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
